@@ -1,6 +1,5 @@
 import os
-from collections import defaultdict
-
+from collections import deque
 import yaml
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
@@ -316,6 +315,9 @@ def train(FLAGS):
     saveto_best_optim_params = os.path.join(FLAGS.saveto,
                                             FLAGS.model_name + GlobalNames.MY_BEST_OPTIMIZER_PARAMS_SUFFIX)
 
+    saveto_average_params = os.path.join(FLAGS.saveto,
+                                         FLAGS.model_name + GlobalNames.MY_AVERAGE_PARAMS_SUFFIX)
+
     timer = Timer()
 
     # ================================================================================== #
@@ -467,7 +469,7 @@ def train(FLAGS):
     cum_samples = 0
     cum_words = 0
     valid_loss = 1.0 * 1e12  # Max Float
-    saving_files = []
+    latest_checkpoints = deque()
 
     # Timer for computing speed
     timer_for_speed = Timer()
@@ -556,15 +558,17 @@ def train(FLAGS):
                                    bad_count=bad_count,
                                    **model_collections.export())
 
-                saving_files.append(saveto_uidx)
+                latest_checkpoints.append(saveto_uidx)
+
+
+                # The number of checkpoints we keep is 'max_kept_checkpoints'
+                # We always drop the oldest checkpoint
+
+                if len(latest_checkpoints) > training_configs['max_kept_checkpoints']:
+                    os.remove(latest_checkpoints[0])
+                    _ = latest_checkpoints.popleft()
 
                 INFO('Done')
-
-                if len(saving_files) > 5:
-                    for f in saving_files[:-1]:
-                        os.remove(f)
-
-                    saving_files = [saving_files[-1]]
 
             # ================================================================================== #
             # Loss Validation & Learning rate annealing
@@ -613,7 +617,7 @@ def train(FLAGS):
                 summary_writer.add_scalar("best_bleu", best_valid_bleu, uidx)
 
                 # If model get new best valid bleu score
-                if valid_bleu >= best_valid_bleu:
+                if valid_bleu >= best_valid_bleu or FLAGS.debug:
                     bad_count = 0
 
                     if is_early_stop is False:
@@ -630,6 +634,15 @@ def train(FLAGS):
 
                         INFO('Done.')
 
+                        # Checkpoints average
+                        # We average the best model and all the latest checkpoints
+
+                        if training_configs['checkpoints_average']:
+                            INFO('Doing checkpoints average...')
+                            average_params = checkpoints_average(*([saveto_best_model] + list(latest_checkpoints)))
+                            INFO('Done.')
+                            torch.save(average_params, saveto_average_params)
+                            del average_params # release memory
                 else:
                     bad_count += 1
 

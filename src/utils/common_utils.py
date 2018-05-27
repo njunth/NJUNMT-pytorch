@@ -1,3 +1,4 @@
+import torch
 import sys
 import time
 import contextlib
@@ -26,7 +27,8 @@ __all__ = [
     'Vocab',
     'sequence_mask',
     'build_vocab_shortlist',
-    'to_gpu'
+    'to_gpu',
+    'checkpoints_average'
 ]
 
 # ================================================================================== #
@@ -55,6 +57,8 @@ class GlobalNames:
     MY_BEST_MODEL_SUFFIX = ".best.tpz"
 
     MY_BEST_OPTIMIZER_PARAMS_SUFFIX = ".best_optim.tpz"
+
+    MY_AVERAGE_PARAMS_SUFFIX = ".best_average.tpz"
 
     MY_COLLECTIONS_SUFFIX = ".collections.pkl"
 
@@ -318,3 +322,34 @@ def build_vocab_shortlist(shortlist):
 def to_gpu(*inputs):
 
     return list(map(lambda x: x.cuda(), inputs))
+
+
+def checkpoints_average(*checkpoints_file):
+    """ Average checkpoints
+
+    Args:
+        checkpoints_file: A list of strings representing the path of checkpoints
+
+    Returns:
+        An ```OrderedDict``` instance. Same as the return type of ```torch.load```.
+    """
+    first_ckpt = checkpoints_file[0]
+
+    average_params = torch.load(first_ckpt, map_location="cpu")
+
+    with torch.no_grad():
+
+        for ckpt_ in checkpoints_file[1:]:
+
+            params_ = torch.load(ckpt_, map_location="cpu")
+            for k in average_params.keys():
+                if k not in params_:
+                    print("{0} not in all the checkpoints!".format(k))
+                    raise KeyError
+                average_params[k] += params_[k]
+
+        for k in average_params.keys():
+            average_params[k] /= len(checkpoints_file)
+
+    return average_params
+
